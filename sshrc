@@ -1,39 +1,33 @@
 #!/usr/bin/env bash
-function sshrc() {
-    local SSHHOME=${SSHHOME:=~}
-    if [ -f $SSHHOME/.sshrc ]; then
-        local files=.sshrc
-        if [ -d $SSHHOME/.sshrc.d ]; then
-            files="$files .sshrc.d"
-        fi
-        ssh -t ${*:1} "
-            export SSHHOME="'$(mktemp -d)'"
-            echo $'"$(cat `which sshrc` | xxd -ps)"' | xxd -ps -r > "'$SSHHOME/sshrc'"
-            chmod +x "'$SSHHOME/sshrc'"
-            echo $'"$( cat << 'EOF' | xxd -ps
-#!/usr/bin/env bash
-bash --rcfile <(echo '
-if [ -e /etc/bash.bashrc ]; then source /etc/bash.bashrc; fi
-if [ -e ~/.bashrc ]; then source ~/.bashrc; fi
-source '$SSHHOME'/.sshrc;
-export PATH=$PATH:'$SSHHOME'
-')
-EOF
-)"' | xxd -ps -r > "'$SSHHOME/bashsshrc'"
-            chmod +x "'$SSHHOME/bashsshrc'"
-            export SSHRCCLEANUP="'$SSHHOME'"
-            echo $'"$(tar cz -h -C $SSHHOME $files | xxd -ps)"' | xxd -ps -r | tar mxz -C "'$SSHHOME'"
-            export SSHHOME="'$SSHHOME'"
-            #bash --rcfile <(echo 'if [ -e /etc/bash.bashrc ]; then source /etc/bash.bashrc; fi; if [ -e ~/.bashrc ]; then source ~/.bashrc; fi; source "'$SSHHOME'"/.sshrc; export PATH="'$PATH'":"'$SSHHOME'"')
-            "'$SSHHOME'"/bashsshrc
-            rm -rf "'$SSHRCCLEANUP'" 
-            "
-    else
-        echo "No such file: $SSHHOME/.sshrc"
-    fi
+SELF=$(readlink -f "$0")
+
+function _bash() {
+    PATH=$SSHHOME:$PATH exec bash --rcfile <(echo '
+    for f in /etc/bash.bashrc "$HOME/.bashrc"; do
+      test -f "$f" && source "$f"
+    done
+    source "$SSHHOME/.sshrc"') "$@"
 }
-if [ $1 ]; then
-    sshrc $@
+
+function _sshrc() {
+    home=${SSHHOME:-$HOME}
+    test -f "$home/.sshrc" || exec echo "No such file: $home/.sshrc" >&2
+    sshrcdir=$(test -d "$home/.sshrc.d" && echo '.sshrc.d')
+    files=$(tar -czhC "$home" .sshrc $sshrcdir | xxd -p)
+    ssh -t "$@" '
+        export SSHHOME=$(mktemp -d); export SSHRCCLEANUP=$SSHHOME
+        echo "'"$files"'" | xxd -p -r | tar -mxzC "$SSHHOME"
+        echo "'"$(xxd -p "$SELF")"'" | xxd -p -r > "$SSHHOME/sshrc"
+        chmod +x "$SSHHOME/sshrc"
+        ln -s sshrc "$SSHHOME/bashsshrc"
+        "$SSHHOME/bashsshrc"
+        rm -rf "$SSHRCCLEANUP"'
+}
+
+if test "$(basename "$0")" = 'bashsshrc'; then
+    _bash "$@"
+elif test -n "$1"; then
+    _sshrc "$@"
 else
     ssh
 fi
