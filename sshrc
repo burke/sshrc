@@ -1,33 +1,46 @@
-#!/usr/bin/env bash
-SELF=$(readlink -f "$0")
+#!/bin/bash
+set -euo pipefail
 
-function _bash() {
-    PATH=$SSHHOME:$PATH exec bash --rcfile <(echo '
-    for f in /etc/bash.bashrc "$HOME/.bashrc"; do
-      test -f "$f" && source "$f"
+function _remote() {
+  PATH="${SSHHOME}:${PATH}" exec bash --rcfile <(echo '
+    for f in /etc/bash.bashrc "${HOME}/.bashrc"; do
+      if [[ -f "$f" ]]; then
+        source "$f"
+      fi
     done
-    source "$SSHHOME/.sshrc"') "$@"
+    source "${SSHHOME}/.sshrc"
+  ') "$@"
 }
 
-function _sshrc() {
-    home=${SSHHOME:-$HOME}
-    test -f "$home/.sshrc" || exec echo "No such file: $home/.sshrc" >&2
-    sshrcdir=$(test -d "$home/.sshrc.d" && echo '.sshrc.d')
-    files=$(tar -czhC "$home" .sshrc $sshrcdir | xxd -p)
-    ssh -t "$@" '
-        export SSHHOME=$(mktemp -d); export SSHRCCLEANUP=$SSHHOME
-        echo "'"$files"'" | xxd -p -r | tar -mxzC "$SSHHOME"
-        echo "'"$(xxd -p "$SELF")"'" | xxd -p -r > "$SSHHOME/sshrc"
-        chmod +x "$SSHHOME/sshrc"
-        ln -s sshrc "$SSHHOME/bashsshrc"
-        "$SSHHOME/bashsshrc"
-        rm -rf "$SSHRCCLEANUP"'
+function _local() {
+  local self=$(readlink "$0")
+  local home=${SSHHOME:-$HOME}
+  if [[ ! -f "${home}/.sshrc" ]]; then
+    exec echo "No such file: ${home}/.sshrc" >&2
+  fi
+
+  local sshrcdir=""
+  if [[ -d "${home}/.sshrc.d" ]] ; then
+    local sshrcdir='.sshrc.d'
+  fi
+
+  local files=$(tar -b1 -chC "${home}" .sshrc ${sshrcdir} | gzip | base64)
+  ssh -t "$@" '
+    export SSHHOME=$(mktemp -d)
+    export SSHRCCLEANUP=${SSHHOME}
+    echo "'"${files}"'" | base64 -d | tar -mxzC "${SSHHOME}"
+    echo "'"$(base64 < "${self}")"'" | base64 -d > "${SSHHOME}/bashsshrc"
+    /bin/bash "${SSHHOME}/bashsshrc"
+    rm -rf "${SSHRCCLEANUP}"'
 }
 
-if test "$(basename "$0")" = 'bashsshrc'; then
-    _bash "$@"
-elif test -n "$1"; then
-    _sshrc "$@"
-else
+main() {
+  if [[ "$(basename "$0")" = 'bashsshrc' ]]; then
+    _remote "$@"
+  elif [[ -n "$1" ]]; then
+    _local "$@"
+  else
     ssh
-fi
+  fi
+}
+main "$@"
