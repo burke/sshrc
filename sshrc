@@ -24,14 +24,15 @@ function _local() {
     local sshrcdir='.sshrc.d'
   fi
 
-  local files=$(tar -b1 -chC "${home}" .sshrc ${sshrcdir} | gzip | base64)
-  ssh -t "$@" '
+  local files=$(tar -b1 -chC "${home}" .sshrc ${sshrcdir} | bzip2 | base64)
+  local ssh_command='
     export SSHHOME=$(mktemp -d)
     export SSHRCCLEANUP=${SSHHOME}
-    echo "'"${files}"'" | base64 -d | tar -mxzC "${SSHHOME}"
-    echo "'"$(base64 < "${self}")"'" | base64 -d > "${SSHHOME}/bashsshrc"
+    echo "'"${files}"'" | base64 -d | tar -mxjC "${SSHHOME}"
+    echo "'"$(bzip2 <"${self}" | base64)"'" | base64 -d | bzip2 -d > "${SSHHOME}/bashsshrc"
     /bin/bash "${SSHHOME}/bashsshrc"
     rm -rf "${SSHRCCLEANUP}"'
+  ssh -t "$@" "${ssh_command}"
 }
 
 main() {
